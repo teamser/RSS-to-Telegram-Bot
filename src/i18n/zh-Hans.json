@@ -22,6 +22,7 @@
         "uncaught_internal_error": "未被捕捉的内部错误",
         "operation_timeout_error": "操作超时",
         "action_invalid": "操作不合法",
+        "sub_limit_reached": "订阅数量已达上限",
         "flood_wait_prompt": "你的操作太快了，导致 bot 超过了 Telegram 的速率限制，请慢一点。",
         "edit_conflict_prompt": "你的操作太快了，导致操作冲突，请慢一点。",
         "callback_already_running_prompt": "你已经请求过其它命令，请等待它完成后重试。",
@@ -30,16 +31,17 @@
     "l10n_permission_denied_reasons": {
         "channel_or_group_not_found": "未找到群组/频道。",
         "permission_denied_no_permission": "你没有使用此命令的权限。",
-        "permission_denied_not_bot_manager": "此命令只可由机器人的管理员使用。",
+        "permission_denied_not_bot_manager": "此命令只可由 bot 的管理员使用。",
         "permission_denied_not_chat_admin": "此命令只可由群/频道管理员使用。",
         "permission_denied_not_in_private_chat": "此命令只可在私聊中使用。",
         "permission_denied_not_member": "你不在本群/频道里，不可以使用这个 bot。",
         "permission_denied_bot_not_member": "本 bot 已经不在本群/频道里，不会在此工作。",
         "permission_denied_switch_pm": "在和 bot 的私聊中继续…",
         "permission_denied_input_command": "请输入命令以继续…",
-        "permission_denied_no_direct_use": "不应直接使用此命令。请改用 /set 。",
+        "permission_denied_no_direct_use": "不应直接使用此命令。请改用 %s 。",
         "promote_to_admin_prompt": "如果你是本群组的匿名管理员，请将 bot 提升为管理员 (不需要任何权限)，这样 bot 才能验证你的身份。",
-        "group_upgrade_needed_prompt": "哎呀，你的群组还没有被升级为一个超级群组。通常，Telegram 的服务器会在某个时候自动完成这个升级，但如果没有的话，你就不得不在使用这个 bot 之前手动升级它。\n请按以下步骤操作: \n1. 转到群组信息，点击「管理群组」\n2. 将「历史记录对新成员」设置为「可见」\n3. 保存历史记录可见性设置\n4. 保存所有设置\n5. (可选) 如果需要的话，你可以将「历史记录对新成员」重新设置为「不可见」\n6. 现在你应该可以使用这个 bot 了"
+        "group_upgrade_needed_prompt": "哎呀，你的群组还没有被升级为一个超级群组。通常，Telegram 的服务器会在某个时候自动完成这个升级，但如果没有的话，你就不得不在使用这个 bot 之前手动升级它。\n请按以下步骤操作: \n1. 转到群组信息，点击「管理群组」。\n2. 将「历史记录对新成员」设置为「可见」。\n3. 保存历史记录可见性设置。\n4. 保存所有设置。\n5. (可选) 如果需要的话，你可以将「历史记录对新成员」重新设置为「不可见」。\n6. 现在你应该可以使用这个 bot 了。",
+        "sub_limit_reached_prompt": "订阅数量已经达到了 bot 管理员应用的限制 (%d/%d)。在添加新的订阅前，请退订 (/unsub) 一些订阅。"
     },
     "l10n_misc": {
         "choose_sub_prompt": "请选择订阅",
@@ -108,7 +110,7 @@
         "display_media": "媒体",
         "display_media_-1": "禁用",
         "display_media_0": "启用",
-        "display_media_1": "仅媒体，无内容 (如有媒体)",
+        "display_media_1": "仅媒体，无内容",
         "display_author": "作者",
         "display_author_-1": "禁用",
         "display_author_0": "自动",
@@ -124,6 +126,9 @@
         "display_title_-1": "禁用",
         "display_title_0": "自动",
         "display_title_1": "启用",
+        "display_entry_tags": "来自文章 (源条目) 的 hashtag",
+        "display_entry_tags_-1": "禁用",
+        "display_entry_tags_1": "启用",
         "style": "风格",
         "style_0": "",
         "style_1": "",
@@ -167,18 +172,18 @@
         "all_subs_are_deactivated": "所有订阅都已停用。"
     },
     "l10n_cmd_set_title": {
-        "cmd_set_title_usage_prompt_html": "命令用法: <code>/set_title 订阅编号 标题</code>\n\n注: 省略 <code>标题</code> 以清除自定义标题 (只有以前设置过才可以清除，否则会收到此提示) 。",
+        "cmd_set_title_usage_prompt_html": "命令用法: <code>/set_title 订阅编号 标题</code>\n\n注: 省略 <code>标题</code> 以清除自定义标题 (只有以前设置过才可以清除，否则会收到此提示)。",
         "set_title_success": "订阅的自定义标题已更改为: ",
         "set_title_success_cleared": "订阅的自定义标题已清除。"
     },
     "l10n_cmd_set_interval": {
-        "cmd_set_interval_usage_prompt_html": "命令用法: <code>/set_interval 订阅编号 监视间隔</code>\n\n注: <code>监视间隔</code> 必须是以分钟为单位的正整数 (不包含单位) 。",
+        "cmd_set_interval_usage_prompt_html": "命令用法: <code>/set_interval 订阅编号 监视间隔</code>\n\n注: <code>监视间隔</code> 必须是以分钟为单位的正整数 (不包含单位)。",
         "set_interval_success_html": "订阅的监视间隔已更改为 <b>%d 分钟</b>。",
         "set_default_interval_success_html": "默认监视间隔已更改为 <b>%d 分钟</b>。",
         "set_interval_failure_too_small_html": "监视间隔必须大于 <b>%d 分钟</b>。"
     },
     "l10n_cmd_set_hashtags": {
-        "cmd_set_hashtags_usage_prompt_html": "命令用法: <code>/set_hashtags 订阅编号 #hashtag1 #hashtag2 …</code>\n\n注: 如果不提供 hashtag, 已有的 hashtag 就会被清除 (只有以前设置过才可以清除，否则会收到此提示) 。",
+        "cmd_set_hashtags_usage_prompt_html": "命令用法: <code>/set_hashtags 订阅编号 #hashtag1 #hashtag2 …</code>\n\n注: 如果不提供 hashtag, 已有的 hashtag 就会被清除 (只有以前设置过才可以清除，否则会收到此提示)。",
         "set_hashtags_success_html": "订阅的自定义 hashtag 已更改为: ",
         "set_hashtags_success_cleared": "订阅的自定义 hashtag 已清除。",
         "set_hashtags_failure_too_many": "Hashtag 太多，请移除一些后重试。"
@@ -195,6 +200,9 @@
         "user_not_found": "未找到用户，请使用用户 ID。",
         "user_info": "用户信息",
         "sub_count": "订阅数量",
+        "sub_limit": "订阅数量限制",
+        "sub_limit_unlimited": "无限",
+        "sub_limit_default": "默认",
         "participant_count": "成员数量",
         "user_state": "用户状态",
         "user_state_-1": "已封禁",
@@ -203,7 +211,10 @@
         "user_state_description_0": "只能在开启多用户模式时使用 bot",
         "user_state_1": "用户",
         "user_state_description_1": "可以使用 bot",
-        "set_user_state_as": "将用户状态设置为"
+        "set_user_state_as": "更改用户状态为",
+        "reset_sub_limit_to_default": "重置订阅数量限制为默认值",
+        "set_sub_limit_to": "将订阅数量限制设置为…",
+        "cmd_set_sub_limit_prompt_html": "命令用法: <code>/set_sub_limit 用户ID 订阅数量限制</code>\n\n注: <code>订阅数量限制</code> 必须是整数，<code>-1</code> 代表无限。"
     },
     "l10n_cmd_descriptions": {
         "commands": "命令",
@@ -223,6 +234,6 @@
         "cmd_description_test": "测试 (仅 bot 管理员)",
         "cmd_description_set_option": "更改 bot 配置 (仅 bot 管理员)",
         "cmd_description_user_info": "查看/修改用户信息 (仅 bot 管理员)",
-        "usage_in_channel_or_group_prompt_html": "<b>在频道/群组里的使用方式:</b>\n1. 将 bot 添加到频道/群组里。\n2a. 直接<b>在频道/群组里</b>发送命令。\n2b. 或者，你也可以<b>在和 bot 的私聊里</b>像这样发送命令: <code>/sub @username https://exmaple.com</code> 或 <code>/sub -10010000000000 https://exmaple.com</code>。\n(<code>@username</code> 是频道/群组的用户名，<code>@</code> 是不可缺少的；<code>-10010000000000</code> 是频道/群组的 ID，必须以 <code>-100</code> 开头)"
+        "usage_in_channel_or_group_prompt_html": "<b>在频道/群组里的使用方式:</b>\n1. 将 bot 添加到频道/群组里。\n2a. 直接<b>在频道/群组里</b>发送命令。\n2b. 或者，你也可以<b>在和 bot 的私聊里</b>像这样发送命令: <code>/sub @username https://example.com</code> 或 <code>/sub -10010000000000 https://example.com</code>。\n(<code>@username</code> 是频道/群组的用户名，<code>@</code> 是不可缺少的；<code>-10010000000000</code> 是频道/群组的 ID，必须以 <code>-100</code> 开头)"
     }
 }

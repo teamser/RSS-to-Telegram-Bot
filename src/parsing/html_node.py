@@ -1,19 +1,33 @@
+#  RSS to Telegram Bot
+#  Copyright (C) 2021-2024  Rongrong <i@rong.moe>
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU Affero General Public License as
+#  published by the Free Software Foundation, either version 3 of the
+#  License, or (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU Affero General Public License for more details.
+#
+#  You should have received a copy of the GNU Affero General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 from __future__ import annotations
-from typing import Optional, Union, List
+from typing import Optional, Union
 
-from url_normalize import url_normalize
+__all__ = ["HtmlTree", "Text", "Link", "Bold", "Italic", "Underline", "Strike", "Blockquote", "Code", "Pre", "Br", "Hr",
+           "ListItem", "OrderedList", "UnorderedList", "TypeTextContent"]
 
-__all__ = ["HtmlTree", "Text", "Link", "Bold", "Italic", "Underline", "Strike", "Code", "Pre", "Br", "Hr",
-           "ListItem", "OrderedList", "UnorderedList"]
-
-_TypeTextContent = Union["Text", str, List["Text"]]  # list["SomeType"] not compatible with Python 3.7
+TypeTextContent = Union["Text", str, list["Text"]]
 
 
 class Text:
     tag: Optional[str] = None
     attr: Optional[str] = None
 
-    def __init__(self, content: _TypeTextContent, param: Optional[str] = None, *_args, **_kwargs):
+    def __init__(self, content: TypeTextContent, param: Optional[str] = None, *_args, **_kwargs):
         if content is None:
             content = ''
         self.param = param
@@ -31,9 +45,7 @@ class Text:
         return type(self.content) is list
 
     def copy(self):
-        if not self.is_nested():
-            return self
-        return type(self)(self.content.copy(), self.param, copy=True)
+        return type(self)(self.content.copy(), self.param, copy=True) if self.is_nested() else self
 
     def strip(self, deeper: bool = False, strip_l: Optional[bool] = True, strip_r: Optional[bool] = True):
         if not self.is_nested():  # str
@@ -41,16 +53,18 @@ class Text:
                 self.content.lstrip()
             if strip_r:
                 self.content.rstrip()
+            return
         if not self.is_listed():  # nested
-            if not deeper:
-                return
-            self.content.strip()
+            if deeper:
+                self.content.strip()
+            return
+        # listed
         while strip_l and self.content and type(self.content[0]) is Br:
             self.content.pop(0)
         while strip_r and self.content and type(self.content[-1]) is Br:
             self.content.pop()
         if deeper:
-            any(map(lambda text: text.strip(strip_l=strip_l, strip_r=strip_r), self.content))
+            any(map(lambda text: text.strip(deeper=deeper, strip_l=strip_l, strip_r=strip_r), self.content))
 
     def lstrip(self, deeper: bool = False):
         self.strip(deeper=deeper, strip_r=False)
@@ -58,23 +72,27 @@ class Text:
     def rstrip(self, deeper: bool = False):
         self.strip(deeper=deeper, strip_l=False)
 
+    def is_empty(self, allow_whitespace: bool = False):
+        if self.is_listed():
+            return all(subText.is_empty(allow_whitespace=allow_whitespace) for subText in self.content)
+        elif self.is_nested():
+            return self.content.is_empty(allow_whitespace=allow_whitespace)
+        else:
+            return not (self.content if allow_whitespace else self.content and self.content.strip())
+
     def get_html(self, plain: bool = False) -> str:
         if self.is_listed():
-            result = ''
-            for subText in self.content:
-                result += subText.get_html(plain=plain)
+            result = ''.join(subText.get_html(plain=plain) for subText in self.content)
         elif self.is_nested():
             result = self.content.get_html(plain=plain)
         else:
             result = self.content
 
-        if plain:
-            return result.replace('\n', '')
-
-        if self.attr and self.param:
-            return f'<{self.tag} {self.attr}="{self.param}">{result}</{self.tag}>'
-        if self.tag:
-            return f'<{self.tag}>{result}</{self.tag}>'
+        if not plain:
+            if self.attr and self.param:
+                return f'<{self.tag} {self.attr}="{self.param}">{result}</{self.tag}>'
+            if self.tag:
+                return f'<{self.tag}>{result}</{self.tag}>'
         return result
 
     def split_html(self, length_limit_head: int, head_count: int = -1, length_limit_tail: int = 4096) -> list:
@@ -113,8 +131,7 @@ class Text:
                 if stripped:
                     split_list.append(stripped)  # split
             elif curr_length >= curr_length_limit and sub_text:
-                for subSubText in sub_text.split_html(curr_length_limit):
-                    split_list.append(subSubText)  # split
+                split_list.extend(sub_text.split_html(curr_length_limit))  # split
 
             return split_list
 
@@ -142,19 +159,16 @@ class Text:
                 instance = subText.find_instances(_class)
                 if instance:
                     result.extend(instance)
-            return result if result else None
+            return result or None
         if self.is_nested():
             instance = self.content.find_instances(_class, shallow)
             if instance:
                 result.extend(instance)
-        return result if result else None
+        return result or None
 
     def __len__(self):
-        length = 0
         if type(self.content) == list:
-            for subText in self.content:
-                length += len(subText)
-            return length
+            return sum(len(subText) for subText in self.content)
         return len(self.content)
 
     def __bool__(self):
@@ -176,7 +190,7 @@ class HtmlTree(Text):
 
 # ---- HTML tags super class ----
 class TagWithParam(Text):
-    def __init__(self, content: _TypeTextContent, param: str, *_args, **_kwargs):
+    def __init__(self, content: TypeTextContent, param: str, *_args, **_kwargs):
         super().__init__(content, param)
 
 
@@ -185,7 +199,7 @@ class TagWithOptionalParam(Text):
 
 
 class TagWithoutParam(Text):
-    def __init__(self, content: _TypeTextContent, *_args, **_kwargs):
+    def __init__(self, content: TypeTextContent, *_args, **_kwargs):
         super().__init__(content)
 
 
@@ -197,17 +211,6 @@ class ListParent(TagWithoutParam):
 class Link(TagWithParam):
     tag = 'a'
     attr = 'href'
-
-    def __init__(self, content: _TypeTextContent, param: str, copy: bool = False, *_args, **_kwargs):
-        super().__init__(content, param)
-        if not copy:
-            try:
-                self.param = url_normalize(self.param)
-            except (ValueError, TypeError):
-                # clear invalid URL
-                self.param = None
-                self.tag = None
-                self.attr = None
 
 
 class Bold(TagWithoutParam):
@@ -224,6 +227,10 @@ class Underline(TagWithoutParam):
 
 class Strike(TagWithoutParam):
     tag = 's'
+
+
+class Blockquote(TagWithoutParam):
+    tag = 'blockquote'
 
 
 class Code(TagWithOptionalParam):
@@ -245,9 +252,7 @@ class Br(TagWithoutParam):
         super().__init__('\n' * count)
 
     def get_html(self, plain: bool = False):
-        if plain:
-            return ''
-        return super().get_html()
+        return '' if plain else super().get_html()
 
 
 class Hr(TagWithoutParam):
@@ -255,9 +260,7 @@ class Hr(TagWithoutParam):
         super().__init__('\n----------------------\n')
 
     def get_html(self, plain: bool = False):
-        if plain:
-            return ''
-        return super().get_html()
+        return '' if plain else super().get_html()
 
 
 class ListItem(TagWithoutParam):
@@ -286,10 +289,8 @@ class OrderedList(ListParent):
         list_items = self.find_instances(ListItem, shallow=True)
         if not list_items:
             return
-        index = 1
-        for list_item in list_items:
+        for index, list_item in enumerate(list_items, start=1):
             list_item.content = [Bold(f'{index}. '), Text(list_item.content), Br()]
-            index += 1
 
 
 class UnorderedList(ListParent):
@@ -301,4 +302,4 @@ class UnorderedList(ListParent):
         if not list_items:
             return
         for list_item in list_items:
-            list_item.content = [Bold(f'● '), Text(list_item.content), Br()]
+            list_item.content = [Bold('● '), Text(list_item.content), Br()]

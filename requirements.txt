@@ -1,40 +1,42 @@
 # telegram and telegraph
-cryptg==0.2.post4
-telethon[cryptg]==1.24.0
+cryptg==0.5.0.post0
+telethon==1.38.1
 aiographfix==0.2.2
 
 # feed parsing
-feedparser==6.0.8
-listparser==0.18
-pillow==9.0.1
-bs4==0.0.1
-beautifulsoup4==4.10.0
-lxml==4.8.0
-fuzzywuzzy==0.18.0
-emoji==1.7.0
-minify-html>=0.6.10, <=0.8.0  # 0.6.10 for Python 3.7 (however, minify-html<0.7.0 comes with no arm64 support)
-matplotlib==3.5.1
+feedparser==6.0.11  # feedparser@git+https://github.com/Rongronggg9/feedparser.git@develop
+listparser[lxml]==0.20
+pillow==11.0.0
+beautifulsoup4==4.12.3
+lxml==5.3.0
+rapidfuzz==3.11.0
+emoji==2.14.0
+minify-html==0.15.0
+minify-html-onepass==0.15.0
+matplotlib==3.9.3
 
 # db
-git+https://github.com/Rongronggg9/asyncpg.git@fix/pep-621
-tortoise-orm[accel]==0.19.0
-aerich==0.6.2
+asyncpg==0.30.0
+tortoise-orm[accel]==0.22.2
+aerich==0.8.0
 
 # network
-aiohttp[speedups]==3.8.1
-aiohttp-socks==0.7.1
-aiohttp-retry==2.4.6
-python-socks[asyncio]==2.0.3
-dnspython[idna]==2.2.1
-url-normalize==1.4.3
+aiohttp[speedups]==3.11.11
+aiohttp-socks==0.9.1
+aiohttp-retry==2.9.1
+python-socks[asyncio]==2.5.3
+dnspython[idna]==2.7.0
 
 # utils
-colorlog==6.6.0
-APScheduler==3.9.1
-python-dotenv==0.20.0
-multidict==6.0.2
-attrs==21.4.0
-asyncstdlib==3.10.4
-cachetools==5.0.0
+yarl==1.18.3
+propcache==0.2.1
+colorlog==6.9.0
+APScheduler==3.11.0
+python-dotenv==1.0.1
+multidict==6.1.0
+asyncstdlib==3.13.0
+cachetools==5.5.0
 CJKwrap==2.2
-uvloop==0.16.0; python_version>="3.7" and sys_platform!='win32' and sys_platform!='cygwin' and sys_platform!='cli'
+typing-extensions==4.12.2
+uvloop==0.21.0; sys_platform!='win32' and sys_platform!='cygwin' and sys_platform!='cli'
+isal==1.7.1; platform_machine=='x86_64' or platform_machine=='AMD64' or platform_machine=='aarch64'

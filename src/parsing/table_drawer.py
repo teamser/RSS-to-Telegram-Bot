@@ -1,6 +1,26 @@
+#  RSS to Telegram Bot
+#  Copyright (C) 2022-2024  Rongrong <i@rong.moe>
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU Affero General Public License as
+#  published by the Free Software Foundation, either version 3 of the
+#  License, or (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU Affero General Public License for more details.
+#
+#  You should have received a copy of the GNU Affero General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 from __future__ import annotations
 from typing import Optional
-from src.compat import Final, cached_async
+from typing_extensions import Final
+
+import matplotlib
+
+matplotlib.use('Agg')
 
 from math import ceil
 from PIL import Image
@@ -8,15 +28,13 @@ from io import BytesIO
 from bs4 import BeautifulSoup
 from matplotlib import pyplot as plt
 from matplotlib.font_manager import FontManager
-from concurrent.futures import ThreadPoolExecutor
 from cjkwrap import fill
 from warnings import filterwarnings
 from cachetools import TTLCache
 
-from src import env
+from ..aio_helper import run_async
 from .utils import logger
-
-_matplotlib_thread_pool = ThreadPoolExecutor(1, 'matplotlib_')
+from ..compat import cached_async
 
 MPL_TTF_LIST = FontManager().ttflist
 MPL_SANS_FONTS: Final = (
@@ -97,7 +115,7 @@ def _convert_table_to_png(table_html: str) -> Optional[bytes]:
             row_labels[i] = fill(label, wrap_length)
 
         auto_set_column_width_flag = True
-        for tries in range(2):
+        for _ in range(2):
             try:
                 # draw table
                 table = ax.table(cellText=cell_texts,
@@ -195,4 +213,4 @@ def _convert_table_to_png(table_html: str) -> Optional[bytes]:
 
 @cached_async(TTLCache(maxsize=32, ttl=180))
 async def convert_table_to_png(table_html: str) -> Optional[bytes]:
-    return await env.loop.run_in_executor(_matplotlib_thread_pool, _convert_table_to_png, table_html)
+    return await run_async(_convert_table_to_png, table_html, prefer_pool='process')

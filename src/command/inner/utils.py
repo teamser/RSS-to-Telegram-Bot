@@ -1,17 +1,37 @@
+#  RSS to Telegram Bot
+#  Copyright (C) 2021-2024  Rongrong <i@rong.moe>
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU Affero General Public License as
+#  published by the Free Software Foundation, either version 3 of the
+#  License, or (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU Affero General Public License for more details.
+#
+#  You should have received a copy of the GNU Affero General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 from __future__ import annotations
-from typing import AnyStr, Any, Union, Optional
-from collections.abc import Iterable, Mapping
+from typing import Any, Union, Optional
+from collections.abc import Iterable, Sequence
 
 import asyncio
 import re
-from datetime import datetime
-from email.utils import parsedate_to_datetime
-from zlib import crc32
+from collections import defaultdict
+from itertools import chain, repeat
 from telethon import Button
 from telethon.tl.types import KeyboardButtonCallback
 
-from src import db, log, env
-from src.i18n import i18n
+try:
+    from isal.isal_zlib import crc32
+except ImportError:
+    from zlib import crc32
+
+from ... import db, log, env
+from ...i18n import i18n
 
 logger = log.getLogger('RSStT.command')
 
@@ -19,7 +39,7 @@ emptyButton = Button.inline(' ', data='null')
 
 
 def parse_hashtags(text: str) -> list[str]:
-    if text.find('#') != -1:
+    if '#' in text:
         return re.findall(r'(?<=#)[^\s#]+', text)
     return re.findall(r'\S+', text)
 
@@ -27,20 +47,35 @@ def parse_hashtags(text: str) -> list[str]:
 def construct_hashtags(tags: Union[Iterable[str], str]) -> str:
     if isinstance(tags, str):
         tags = parse_hashtags(tags)
-    return ' '.join('#' + tag for tag in tags)
+    return '#' + ' #'.join(tags)
 
 
-def get_hash(string: AnyStr) -> str:
-    if isinstance(string, str):
-        string = string.encode('utf-8')
-    return hex(crc32(string))[2:]
+def calculate_update(old_hashes: Optional[Sequence[str]], entries: Sequence[dict]) \
+        -> tuple[Iterable[str], Iterable[dict]]:
+    new_hashes_d = {
+        hex(crc32(guid.encode('utf-8')))[2:]: entry
+        for guid, entry in (
+            (
+                entry.get('guid') or entry.get('link') or entry.get('title') or entry.get('summary')
+                or (
+                    # the first non-empty content.value
+                    next(filter(None, map(lambda content: content.get('value'), entry.get('content', []))), '')
+                ),
+                entry
+            )
+            for entry in entries
+        )
+        if guid
+    }
+    if old_hashes:
+        new_hashes_d.update(zip(old_hashes, repeat(None)))
+    new_hashes = new_hashes_d.keys()
+    updated_entries = filter(None, new_hashes_d.values())
+    return new_hashes, updated_entries
 
 
 def filter_urls(urls: Optional[Iterable[str]]) -> tuple[str, ...]:
-    if not urls:
-        return tuple()
-
-    return tuple(filter(lambda x: x.startswith('http://') or x.startswith('https://'), urls))
+    return tuple(filter(lambda x: x.startswith('http://') or x.startswith('https://'), urls)) if urls else ()
 
 
 # copied from command.utils
@@ -53,7 +88,7 @@ def formatting_time(days: int = 0, hours: int = 0, minutes: int = 0, seconds: in
     days = days + hours // 24 + minutes // (24 * 60) + seconds // (24 * 60 * 60)
     hours = (hours + minutes // 60 + seconds // (60 * 60)) % 24
     minutes = (minutes + seconds // 60) % 60
-    seconds = seconds % 60
+    seconds %= 60
     return (
             (f'{days}d' if days > 0 or long else '')
             + (f'{hours}h' if hours > 0 or long else '')
@@ -62,26 +97,7 @@ def formatting_time(days: int = 0, hours: int = 0, minutes: int = 0, seconds: in
     )
 
 
-def get_http_caching_headers(headers: Optional[Mapping]) -> dict[str, Optional[Union[str, datetime]]]:
-    """
-    :param headers: dict of headers
-    :return: a dict containing "Etag" (`str` or `None`) and "Last-Modified" (`datetime.datetime` or `None`) headers
-    """
-    if not headers:
-        return {
-            'Last-Modified': None,
-            'ETag': None
-        }
-
-    last_modified = headers.get('Last-Modified', headers.get('Date'))
-    last_modified = parsedate_to_datetime(last_modified) if last_modified else datetime.utcnow()
-    return {
-        'Last-Modified': last_modified,
-        'ETag': headers.get('ETag')
-    }
-
-
-def arrange_grid(to_arrange: Iterable, columns: int = 8, rows: int = 13) -> Optional[tuple[tuple[Any, ...], ...]]:
+def arrange_grid(to_arrange: Iterable, columns: int = 8, rows: int = 13) -> tuple[tuple[Any, ...], ...]:
     """
     :param to_arrange: `Iterable` containing objects to arrange
     :param columns: 1-based, telegram limit: 8 (row 1-12), 4 (row 13)
@@ -95,7 +111,38 @@ def arrange_grid(to_arrange: Iterable, columns: int = 8, rows: int = 13) -> Opti
     columns = min(columns, len(to_arrange))
     return tuple(
         tuple(to_arrange[i:i + columns]) for i in range(0, counts, columns)
-    ) if counts > 0 else None
+    ) if counts > 0 else ()
+
+
+def get_lang_buttons(callback=str, current_lang: str = None, tail: str = '') \
+        -> tuple[tuple[tuple[KeyboardButtonCallback, ...], ...], tuple[str, ...]]:
+    def push(n_: int):
+        if len(carry) >= n_:
+            lang_n_per_row[n_].extend(carry)
+            carry.clear()
+
+    lang_n_per_row = defaultdict(list)
+    carry = []
+    for n in sorted(i18n.lang_n_per_row.keys(), reverse=True):
+        for lang in i18n.lang_n_per_row[n]:
+            if lang == current_lang:
+                continue
+            push(n)
+            carry.append(lang)
+        push(n)
+        lang_n_per_row[n].sort()
+    push(1)
+
+    buttons = tuple(
+        tuple(map(
+            lambda l: Button.inline(i18n[l]['lang_native_name'], data=f'{callback}={l}{tail}'),
+            lang_n_per_row[n][i:i + n]
+        ))
+        for n in sorted(lang_n_per_row.keys(), reverse=True)
+        for i in range(0, len(lang_n_per_row[n]), n)
+    )
+    langs = tuple(chain.from_iterable(lang_n_per_row.values()))
+    return buttons, langs
 
 
 async def get_sub_list_by_page(user_id: int, page_number: int, size: int, desc: bool = True, *args, **kwargs) \
@@ -118,9 +165,7 @@ async def get_sub_list_by_page(user_id: int, page_number: int, size: int, desc: 
         return 0, 0, [], 0
 
     page_count = (sub_count - 1) // size + 1
-    if page_number > page_count:
-        # raise IndexError(f'Page {page} does not exist.')
-        page_number = page_count
+    page_number = min(page_number, page_count)
 
     offset = (page_number - 1) * size
     page = await db.Sub.filter(user=user_id, *args, **kwargs) \
@@ -140,12 +185,12 @@ def get_page_buttons(page_number: int,
                      tail: str = '') -> list[Button]:
     page_number = min(page_number, page_count)
     page_info = f'{page_number} / {page_count}' + (f' ({total_count})' if total_count else '')
-    page_buttons = [
+    return [
         Button.inline(f'< {i18n[lang]["previous_page"]}', data=f'{get_page_callback}|{page_number - 1}{tail}')
         if page_number > 1
         else emptyButton,
 
-        Button.inline(page_info + ' | ' + i18n[lang]['cancel'], data='cancel')
+        Button.inline(f'{page_info} | {i18n[lang]["cancel"]}', data='cancel')
         if display_cancel
         else Button.inline(page_info, data='null'),
 
@@ -153,7 +198,6 @@ def get_page_buttons(page_number: int,
         if page_number < page_count
         else emptyButton,
     ]
-    return page_buttons
 
 
 async def get_sub_choosing_buttons(user_id: int,
@@ -248,7 +292,7 @@ async def update_interval(feed: Union[db.Feed, db.Sub, int]):
 
     feed_update_flag = False
     if new_interval != curr_interval or (set_to_default and feed.interval is not None):
-        feed.interval = new_interval if not set_to_default else None
+        feed.interval = None if set_to_default else new_interval
         feed_update_flag = True
     if feed.state != 1:
         feed.state = 1
@@ -271,6 +315,28 @@ async def count_sub(user_id: int, *args, **kwargs) -> int:
 
 async def have_subs(user_id: int) -> bool:
     return await db.Sub.filter(user=user_id).exists()
+
+
+async def check_sub_limit(user_id: int, force_count_current: bool = False) -> tuple[bool, int, int, bool]:
+    """
+    :return: exceeded (bool), current count (int), limit (int), is default limit (bool)
+    """
+    curr_count: int = -1
+    limit: int = -1
+    is_default_limit: bool = False
+    if user_id not in env.MANAGER:
+        # noinspection PyTypeChecker
+        limit: Optional[int] = await db.User.get_or_none(id=user_id).values_list('sub_limit', flat=True)
+        if limit is None:
+            limit: int = (db.EffectiveOptions.user_sub_limit
+                          if user_id > 0
+                          else db.EffectiveOptions.channel_or_group_sub_limit)
+            is_default_limit = True
+
+    if force_count_current or limit >= 0:
+        curr_count = await count_sub(user_id)
+
+    return curr_count >= limit >= 0, curr_count, limit, is_default_limit
 
 
 async def activate_feed(feed: db.Feed) -> db.Feed:
@@ -328,9 +394,8 @@ async def activate_or_deactivate_sub(user_id: int, sub: Union[db.Sub, int], acti
     feed = sub.feed
     if activate and feed.state != 1:
         await activate_feed(feed)
-    else:
-        if _update_interval:
-            await update_interval(feed)
+    elif _update_interval:
+        await update_interval(feed)
 
     return sub
 

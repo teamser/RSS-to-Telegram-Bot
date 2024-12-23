@@ -1,17 +1,35 @@
+#  RSS to Telegram Bot
+#  Copyright (C) 2021-2024  Rongrong <i@rong.moe>
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU Affero General Public License as
+#  published by the Free Software Foundation, either version 3 of the
+#  License, or (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU Affero General Public License for more details.
+#
+#  You should have received a copy of the GNU Affero General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 from __future__ import annotations
 from collections.abc import Iterator, Iterable, Awaitable
 from typing import Union, Optional
 
 import re
+import asyncio
 from bs4 import BeautifulSoup
 from bs4.element import NavigableString, PageElement, Tag
 from urllib.parse import urlparse
-from attr import define
+from dataclasses import dataclass
 
-from src import web, env
+from .. import web, env
 from .medium import Video, Image, Media, Animation, Audio, UploadedImage
 from .html_node import *
 from .utils import stripNewline, stripLineEnd, isAbsoluteHttpLink, resolve_relative_link, emojify, is_emoticon
+from ..aio_helper import run_async
 
 convert_table_to_png: Optional[Awaitable]
 if env.TABLE_TO_IMAGE:
@@ -29,6 +47,15 @@ srcsetParser = re.compile(r'(?:^|,\s*)'
                           r'(?=,|$)').finditer  # e.g.: url,url 1x,url 2x,url 100w,url 200w
 
 
+def effective_link(content: TypeTextContent, href: str, base: str = None) -> Union[TypeTextContent, Link, Text]:
+    if href.startswith('javascript'):  # drop javascript links
+        return content
+    href = resolve_relative_link(base, href)
+    if not isAbsoluteHttpLink(href):
+        return Text([Text(f'{content} ('), Code(href), Text(')')])
+    return Link(content, href)
+
+
 class Parser:
     def __init__(self, html: str, feed_link: Optional[str] = None):
         """
@@ -36,13 +63,15 @@ class Parser:
         :param feed_link: feed link (use for resolve relative urls)
         """
         self.html = html
-        self.soup = BeautifulSoup(self.html, 'lxml')
-        self.media: Media = Media()
+        self.soup: Optional[BeautifulSoup] = None
+        self.media = Media()
         self.html_tree = HtmlTree('')
         self.feed_link = feed_link
         self.parsed = False
+        self._parse_item_count = 0
 
     async def parse(self):
+        self.soup = await run_async(BeautifulSoup, self.html, 'lxml', prefer_pool='thread')
         self.html_tree = HtmlTree(await self._parse_item(self.soup))
         self.parsed = True
 
@@ -51,8 +80,14 @@ class Parser:
             raise RuntimeError('You must parse the HTML first')
         return stripNewline(stripLineEnd(self.html_tree.get_html().strip()))
 
-    async def _parse_item(self, soup: Union[PageElement, BeautifulSoup, Tag, NavigableString, Iterable[PageElement]]) \
-            -> Optional[Text]:
+    async def _parse_item(
+            self,
+            soup: Union[PageElement, BeautifulSoup, Tag, NavigableString, Iterable[PageElement]],
+            in_list: bool = False
+    ) -> Optional[Text]:
+        self._parse_item_count += 1
+        if self._parse_item_count % 64 == 0:
+            await asyncio.sleep(0)  # yield to other coroutines, avoid blocking
         result = []
         if isinstance(soup, Iterator):  # a Tag is also Iterable, but we only expect an Iterator here
             prev_tag_name = None
@@ -82,7 +117,7 @@ class Parser:
             return None
 
         tag = soup.name
-        if tag is None:
+        if tag is None or tag == 'script':
             return None
 
         if tag == 'table':
@@ -90,25 +125,33 @@ class Parser:
             if not rows:
                 return None
             rows_content = []
-            for row in rows:
+            for i, row in enumerate(rows):
                 columns = row.findAll(('td', 'th'))
-                if len(columns) != 1:
+                if len(rows) > 1 and len(columns) > 1:  # allow single-row or single-column tables
                     if env.TABLE_TO_IMAGE:
-                        self.media.add(UploadedImage(convert_table_to_png(str(soup))))
+                        self.media.add(UploadedImage(convert_table_to_png(str(soup)), 'table.png'))
                     return None
-                row_content = await self._parse_item(columns[0])
-                if row_content:
-                    if row_content.get_html().endswith('\n'):
+                for j, column in enumerate(columns):  # transpose single-row tables into single-column tables
+                    row_content = await self._parse_item(column)
+                    if row_content:
                         rows_content.append(row_content)
-                        continue
-                    rows_content.extend((row_content, Br()))
+                        if i < len(rows) - 1 or j < len(columns) - 1:
+                            rows_content.append(Br(2))
             return Text(rows_content) or None
 
         if tag == 'p' or tag == 'section':
             parent = soup.parent.name
             text = await self._parse_item(soup.children)
             if text:
-                return Text([Br(), text, Br()]) if parent != 'li' else text
+                if parent == 'li':
+                    return text
+                text_l = [text]
+                ps, ns = soup.previous_sibling, soup.next_sibling
+                if not (isinstance(ps, Tag) and ps.name == 'blockquote'):
+                    text_l.insert(0, Br())
+                if not (isinstance(ns, Tag) and ns.name == 'blockquote'):
+                    text_l.append(Br())
+                return Text(text_l) if len(text_l) > 1 else text
             return None
 
         if tag == 'blockquote':
@@ -116,30 +159,49 @@ class Parser:
             if not quote:
                 return None
             quote.strip()
-            return Text([Hr(), quote, Hr()])
+            if quote.is_empty():
+                return None
+            return Blockquote(quote)
+
+        if tag == 'q':
+            quote = await self._parse_item(soup.children)
+            if not quote:
+                return None
+            quote.strip()
+            if quote.is_empty():
+                return None
+            cite = soup.get('cite')
+            if cite:
+                quote = effective_link(quote, cite, self.feed_link)
+            return Text([Text('“'), quote, Text('”')])
 
         if tag == 'pre':
             return Pre(await self._parse_item(soup.children))
 
         if tag == 'code':
-            return Code(await self._parse_item(soup.children))
+            class_ = soup.get('class')
+            if isinstance(class_, list):
+                try:
+                    class_ = next(filter(lambda x: x.startswith('language-'), class_))
+                except StopIteration:
+                    class_ = None
+            elif class_ and isinstance(class_, str) and not class_.startswith('language-'):
+                class_ = f'language-{class_}'
+            else:
+                class_ = None
+            return Code(await self._parse_item(soup.children), param=class_)
 
         if tag == 'br':
             return Br()
 
         if tag == 'a':
             text = await self._parse_item(soup.children)
-            if not text:
+            if not text or text.is_empty():
                 return None
             href = soup.get("href")
             if not href:
                 return None
-            href = resolve_relative_link(self.feed_link, href)
-            if not isAbsoluteHttpLink(href):
-                if href.startswith('javascript'):  # drop javascript links
-                    return text
-                return Text([Text(f'{text} ('), Code(href), Text(')')])
-            return Link(text, href)
+            return effective_link(text, href, self.feed_link)
 
         if tag == 'img':
             src, srcset = soup.get('src'), soup.get('srcset')
@@ -236,24 +298,32 @@ class Parser:
             if not src:
                 return None
             src = resolve_relative_link(self.feed_link, src)
-            title = await web.get_page_title(src)
-            return Text([Br(2), Link(f'iframe ({title})', param=src), Br(2)])
+            title = urlparse(src).hostname if env.TRAFFIC_SAVING else await web.get_page_title(src)
+            return Text([Br(2), effective_link(f'iframe ({title})', src), Br(2)])
 
-        if tag == 'ol' or tag == 'ul':
+        if (ordered := tag == 'ol') or tag in ('ul', 'menu', 'dir'):
             texts = []
             list_items = soup.findAll('li', recursive=False)
             if not list_items:
                 return None
             for list_item in list_items:
-                text = await self._parse_item(list_item)
-                if text and text.get_html().strip():
-                    texts.append(ListItem(text))
+                text = await self._parse_item(list_item, in_list=True)
+                if text:
+                    texts.append(text)
             if not texts:
                 return None
-            if tag == 'ol':
-                return OrderedList([Br(), *texts, Br()])
-            if tag == 'ul':
-                return UnorderedList([Br(), *texts, Br()])
+            return OrderedList([Br(), *texts, Br()]) if ordered else UnorderedList([Br(), *texts, Br()])
+
+        if tag == 'li':
+            # <li> tags should be wrapped in <ol> or <ul>, but some feeds do not obey this rule
+            # we do an "ugly fix" here to ensure that linebreaks are not missing
+            text = await self._parse_item(soup.children)
+            if not text:
+                return None
+            text.strip(deeper=True)
+            if not text.get_html().strip():
+                return None
+            return ListItem(text) if in_list else UnorderedList([Br(), ListItem(text), Br()])
 
         text = await self._parse_item(soup.children)
         return text or None
@@ -278,7 +348,7 @@ class Parser:
         return str(self.html_tree)
 
 
-@define
+@dataclass
 class Parsed:
     html_tree: HtmlTree
     media: Media

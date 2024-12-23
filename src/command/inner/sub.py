@@ -1,23 +1,42 @@
+#  RSS to Telegram Bot
+#  Copyright (C) 2021-2024  Rongrong <i@rong.moe>
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU Affero General Public License as
+#  published by the Free Software Foundation, either version 3 of the
+#  License, or (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU Affero General Public License for more details.
+#
+#  You should have received a copy of the GNU Affero General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 from __future__ import annotations
-from typing import Union, Optional
+from typing import Union, Optional, AnyStr
 from collections.abc import Sequence
 
 import re
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from bs4 import BeautifulSoup
-from bs4.element import Tag
+from bs4.element import SoupStrainer
 from urllib.parse import urljoin
 from cachetools import TTLCache
+from os import path
 
-from src import db, web
-from src.i18n import i18n
-from .utils import get_hash, update_interval, list_sub, get_http_caching_headers, filter_urls, logger, escape_html
-from src.parsing.utils import html_space_stripper
+from ... import db, web, env
+from ...aio_helper import run_async
+from ...i18n import i18n
+from .utils import update_interval, list_sub, filter_urls, logger, escape_html, \
+    check_sub_limit, calculate_update
+from ...parsing.utils import ensure_plain
 
 FeedSnifferCache = TTLCache(maxsize=256, ttl=60 * 60 * 24)
 
-with open('src/opml_template.opml', 'r') as __template:
+with open(path.normpath(path.join(path.dirname(__file__), '../..', 'opml_template.opml')), 'r') as __template:
     OPML_TEMPLATE = __template.read()
 
 
@@ -55,7 +74,7 @@ async def sub(user_id: int,
             if rss_d is None:
                 # try sniffing a feed for the web page
                 if not bypass_feed_sniff and wf.status == 200 and wf.content:
-                    sniffed_feed_url = feed_sniffer(feed_url, wf.content)
+                    sniffed_feed_url = await feed_sniffer(feed_url, wf.content)
                     if sniffed_feed_url:
                         sniff_ret = await sub(user_id, sniffed_feed_url, lang=lang, bypass_feed_sniff=True)
                         if sniff_ret['sub']:
@@ -70,36 +89,45 @@ async def sub(user_id: int,
                 if feed:
                     await migrate_to_new_url(feed, feed_url)
 
+            wr = wf.web_response
+            assert wr is not None
+
             # need to use get_or_create because we've changed feed_url to the redirected one
             title = rss_d.feed.title
-            title = html_space_stripper(title) if title else ''
+            title = await ensure_plain(title) if title else ''
             feed, created_new_feed = await db.Feed.get_or_create(defaults={'title': title}, link=feed_url)
             if created_new_feed or feed.state == 0:
                 feed.state = 1
                 feed.error_count = 0
-                feed.next_check_time = None
-                http_caching_d = get_http_caching_headers(wf.headers)
-                feed.etag = http_caching_d['ETag']
-                feed.last_modified = http_caching_d['Last-Modified']
-                feed.entry_hashes = [get_hash(entry.get('guid') or entry.get('link')) for entry in rss_d.entries]
+                feed.next_check_time = wf.calc_next_check_as_per_server_side_cache()
+                etag = wr.etag
+                if etag:
+                    feed.etag = etag
+                feed.last_modified = wr.last_modified
+                feed.entry_hashes = list(calculate_update(old_hashes=None, entries=rss_d.entries)[0])
                 await feed.save()  # now we get the id
                 db.effective_utils.EffectiveTasks.update(feed.id)
 
         sub_title = sub_title if feed.title != sub_title else None
 
         if not _sub:  # create a new sub if needed
-            _sub, created_new_sub = await db.Sub.get_or_create(user_id=user_id, feed=feed,
-                                                               defaults={'title': sub_title if sub_title else None,
-                                                                         'interval': None,
-                                                                         'notify': -100,
-                                                                         'send_mode': -100,
-                                                                         'length_limit': -100,
-                                                                         'link_preview': -100,
-                                                                         'display_author': -100,
-                                                                         'display_via': -100,
-                                                                         'display_title': -100,
-                                                                         'style': -100,
-                                                                         'display_media': -100})
+            _sub, created_new_sub = await db.Sub.get_or_create(
+                user_id=user_id, feed=feed,
+                defaults={
+                    'title': sub_title if sub_title else None,
+                    'interval': None,
+                    'notify': -100,
+                    'send_mode': -100,
+                    'length_limit': -100,
+                    'link_preview': -100,
+                    'display_author': -100,
+                    'display_via': -100,
+                    'display_title': -100,
+                    'display_entry_tags': -100,
+                    'style': -100,
+                    'display_media': -100
+                }
+            )
 
         if not created_new_sub:
             if _sub.title == sub_title and _sub.state == 1:
@@ -121,6 +149,9 @@ async def sub(user_id: int,
         ret['sub'] = _sub
         if created_new_sub:
             logger.info(f'Subed {feed_url} for {user_id}')
+
+        await asyncio.shield(update_interval(feed=feed))
+
         return ret
 
     except Exception as e:
@@ -136,10 +167,22 @@ async def subs(user_id: int,
     if not feed_urls:
         return None
 
-    result = await asyncio.gather(*(sub(user_id, url, lang=lang) for url in feed_urls))
+    limit_reached, count, limit, _ = await check_sub_limit(user_id)
+    if limit > 0:
+        remaining = limit - count if not limit_reached else 0
+        remaining_feed_urls = feed_urls[:remaining]
+        failure = [{'url': url, 'msg': 'ERROR: ' + i18n[lang]['sub_limit_reached']}
+                   for url in feed_urls[remaining:]]
+        if failure:
+            logger.info(f'Sub limit reached for {user_id}, rejected {len(failure)} feeds of {len(feed_urls)}')
+    else:
+        remaining_feed_urls = feed_urls
+        failure = []
+
+    result = await asyncio.gather(*(sub(user_id, url, lang=lang) for url in remaining_feed_urls))
 
     success = tuple(sub_d for sub_d in result if sub_d['sub'])
-    failure = tuple(sub_d for sub_d in result if not sub_d['sub'])
+    failure.extend(sub_d for sub_d in result if not sub_d['sub'])
 
     success_msg = (
             (f'<b>{i18n[lang]["sub_successful"]}</b>\n' if success else '')
@@ -213,8 +256,8 @@ async def unsubs(user_id: int,
         return None
 
     coroutines = (
-            (tuple(unsub(user_id, feed_url=url, lang=lang) for url in feed_urls) if feed_urls else tuple())
-            + (tuple(unsub(user_id, sub_id=sub_id, lang=lang) for sub_id in sub_ids) if sub_ids else tuple())
+            (tuple(unsub(user_id, feed_url=url, lang=lang) for url in feed_urls) if feed_urls else ())
+            + (tuple(unsub(user_id, sub_id=sub_id, lang=lang) for sub_id in sub_ids) if sub_ids else ())
     )
 
     result = await asyncio.gather(*coroutines)
@@ -247,21 +290,25 @@ async def unsubs(user_id: int,
 
 async def unsub_all(user_id: int, lang: Optional[str] = None) \
         -> Optional[dict[str, Union[dict[str, Union[int, str, db.Sub, None]], str]]]:
-    user_sub_list = await db.Sub.filter(user=user_id)
-    sub_ids = tuple(_sub.id for _sub in user_sub_list)
-    return await unsubs(user_id, sub_ids=sub_ids, lang=lang)
+    user_sub_list = await db.Sub.filter(user=user_id).values_list('id', flat=True)
+    return await unsubs(user_id, sub_ids=user_sub_list, lang=lang) if user_sub_list else None
 
 
 async def export_opml(user_id: int) -> Optional[bytes]:
     sub_list = await list_sub(user_id)
     opml = BeautifulSoup(OPML_TEMPLATE, 'lxml-xml')
-    create_time = Tag(name='dateCreated')
-    create_time.string = datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S UTC')
+    create_time = opml.new_tag('dateCreated')
+    create_time.string = opml.new_string(datetime.now(timezone.utc).strftime('%a, %d %b %Y %H:%M:%S UTC'))
     opml.head.append(create_time)
     empty_flags = True
     for _sub in sub_list:
         empty_flags = False
-        outline = Tag(name='outline', attrs={'text': _sub.title or _sub.feed.title, 'xmlUrl': _sub.feed.link})
+        outline = opml.new_tag(name='outline', attrs=dict(
+            type='rss',
+            text=_sub.title or _sub.feed.title,
+            title=_sub.feed.title,
+            xmlUrl=_sub.feed.link
+        ))
         opml.body.append(outline)
     if empty_flags:
         return None
@@ -296,10 +343,16 @@ async def migrate_to_new_url(feed: db.Feed, new_url: str) -> Union[bool, db.Feed
     new_url_feed.next_check_time = None
     await new_url_feed.save()
 
-    await feed.subs.all().update(feed=new_url_feed)  # migrate all subs to the new feed
+    # migrate all subs to the new feed
+    tasks_migrate = []
+    async for exist_sub in feed.subs:
+        if await db.Sub.filter(feed=new_url_feed, user_id=exist_sub.user_id).exists():
+            continue  # sub already exists, skip it, delete cascade later
+        exist_sub.feed = new_url_feed
+        tasks_migrate.append(env.loop.create_task(exist_sub.save()))
 
-    await update_interval(new_url_feed)
-    await feed.delete()  # delete the old feed
+    await asyncio.gather(*tasks_migrate)
+    await asyncio.gather(update_interval(new_url_feed), feed.delete())
     return new_url_feed
 
 
@@ -309,24 +362,28 @@ FeedAHrefMatcher = re.compile(r'/(feed|rss|atom)(\.(xml|rss|atom))?$', re.I)
 FeedATextMatcher = re.compile(r'([^a-zA-Z]|^)(rss|atom)([^a-zA-Z]|$)', re.I)
 
 
-def feed_sniffer(url: str, html: str) -> Optional[str]:
+async def feed_sniffer(url: str, html: AnyStr) -> Optional[str]:
     if url in FeedSnifferCache:
         return FeedSnifferCache[url]
-    if len(html) < 69:  # len of `<html><head></head><body></body></html>` + `<link rel="alternate" href="">`
-        return None  # too short to sniff
+    # if len(html) < 69:  # len of `<html><head></head><body></body></html>` + `<link rel="alternate" href="">`
+    #     return None  # too short to sniff
 
-    soup = BeautifulSoup(html, 'lxml')
-    links = soup.find_all(name='link', attrs={'rel': 'alternate', 'type': FeedLinkTypeMatcher, 'href': True})
-    if not links:
-        links = soup.find_all(name='link', attrs={'rel': 'alternate', 'href': FeedLinkHrefMatcher})
-    if not links:
-        links = soup.find_all(name='a', attrs={'class': FeedATextMatcher})
-    if not links:
-        links = soup.find_all(name='a', attrs={'title': FeedATextMatcher})
-    if not links:
-        links = soup.find_all(name='a', attrs={'href': FeedAHrefMatcher})
-    if not links:
-        links = soup.find_all(name='a', text=FeedATextMatcher)
+    soup = await run_async(BeautifulSoup, html, 'lxml',
+                           parse_only=SoupStrainer(name=('a', 'link'), attrs={'href': True}),
+                           prefer_pool='thread')
+    links = (
+            soup.find_all(name='link', attrs={'rel': 'alternate', 'type': FeedLinkTypeMatcher})
+            or
+            soup.find_all(name='link', attrs={'rel': 'alternate', 'href': FeedLinkHrefMatcher})
+            or
+            soup.find_all(name='a', attrs={'class': FeedATextMatcher})
+            or
+            soup.find_all(name='a', attrs={'title': FeedATextMatcher})
+            or
+            soup.find_all(name='a', attrs={'href': FeedAHrefMatcher})
+            or
+            soup.find_all(name='a', string=FeedATextMatcher)
+    )
     if links:
         feed_url = urljoin(url, links[0]['href'])
         FeedSnifferCache[url] = feed_url

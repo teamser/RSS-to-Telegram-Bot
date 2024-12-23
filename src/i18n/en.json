@@ -22,6 +22,7 @@
         "uncaught_internal_error": "Uncaught internal error",
         "operation_timeout_error": "Operation timeout",
         "action_invalid": "Action invalid",
+        "sub_limit_reached": "Subscription quantity limit reached",
         "flood_wait_prompt": "You are operating too frequently that the bot has exceeded the rate limit of Telegram. Please slow down.",
         "edit_conflict_prompt": "You are operating too frequently that operation conflicts. Please slow down.",
         "callback_already_running_prompt": "You have requested another command. Please retry after it finishes.",
@@ -37,9 +38,10 @@
         "permission_denied_bot_not_member": "The bot is no longer in this group/channel, thus won't work here.",
         "permission_denied_switch_pm": "Continue in the private chat with the bot…",
         "permission_denied_input_command": "Please input a command to continue…",
-        "permission_denied_no_direct_use": "This command should not be used directly. Use /set instead.",
+        "permission_denied_no_direct_use": "This command should not be used directly. Use %s instead.",
         "promote_to_admin_prompt": "If you are an anonymous admin of this group, please promote the bot to an admin (no permission needed) to empower the bot to verify your identity.",
-        "group_upgrade_needed_prompt": "Oops, your group hasn't been upgraded to a supergroup. Generally, the Telegram server should automatically perform this upgrade at some time, but if not, you have to upgrade it manually before you can use the bot.\nPlease follow these steps:\n1. Goto the group info, then click \"Manage group\"\n2. Change \"Chat history for new members\" to \"Visible\"\n3. Save chat history visibility setting\n4. Save all settings\n5. (Optional) If needed, you can change \"Chat history for new members\" to \"Hidden\" again\n6. Now you should be able to use the bot"
+        "group_upgrade_needed_prompt": "Oops, your group hasn't been upgraded to a supergroup. Generally, the Telegram server should automatically perform this upgrade at some time, but if not, you have to upgrade it manually before you can use the bot.\nPlease follow these steps:\n1. Goto the group info, then click \"Manage group\".\n2. Change \"Chat history for new members\" to \"Visible\".\n3. Save chat history visibility setting.\n4. Save all settings.\n5. (Optional) If needed, you can change \"Chat history for new members\" to \"Hidden\" again.\n6. Now you should be able to use the bot.",
+        "sub_limit_reached_prompt": "The quantity of your subscriptions has reached the limit (%d/%d) applied by the bot manager. Please remove (/unsub) some subscriptions before adding new ones."
     },
     "l10n_misc": {
         "choose_sub_prompt": "Please choose a subscription",
@@ -59,13 +61,13 @@
         "group": "Group"
     },
     "l10n_cmd_sub": {
-        "sub_reply_feed_url_prompt_html": "Please reply to this message with the URL of an RSS feed. \nOr, you may use <code>/sub url1 url2 url3 …</code> to subscribe in bulk.",
+        "sub_reply_feed_url_prompt_html": "Please reply to this message with the URL of an RSS feed.\nOr, you may use <code>/sub url1 url2 url3 …</code> to subscribe in bulk.",
         "sub_usage_in_channel_html": "Please use <code>/sub url1 url2 url3 …</code> to subscribe.",
         "sub_successful": "Subscribed successfully",
         "sub_failed": "Failed to subscribe"
     },
     "l10n_cmd_unsub": {
-        "unsub_choose_sub_prompt_html": "Please choose a subscription you'd like to unsubscribe from. \nOr, you may use <code>/unsub url1 url2 url3 …</code> to unsubscribe in bulk.",
+        "unsub_choose_sub_prompt_html": "Please choose a subscription you'd like to unsubscribe from.\nOr, you may use <code>/unsub url1 url2 url3 …</code> to unsubscribe in bulk.",
         "unsub_successful": "Unsubscribed successfully",
         "unsub_failed": "Failed to unsubscribe"
     },
@@ -80,7 +82,7 @@
         "import_for_channel_or_group_prompt": "If you want to import subscriptions for your channel/group, please fill in the caption with the channel/group's ID (must start with '-100') or @username.",
         "send_opml_reply_placeholder": "The OPML file to be imported (extension name must be .opml)",
         "fetch_file_failed": "Failed to fetch the file",
-        "opml_import_processing": "If the number of feeds is large or feed servers are slow, it can be a long wait. Sit back and relax.",
+        "opml_import_processing": "If the quantity of feeds is large or feed servers are slow, it can be a long wait. Sit back and relax.",
         "opml_parse_error": "OPML parsing error",
         "keep_subs_title_button": "Keep the custom titles of imported subscriptions",
         "delete_subs_title_button": "Delete the custom titles of imported subscriptions"
@@ -108,7 +110,7 @@
         "display_media": "Media",
         "display_media_-1": "Disable",
         "display_media_0": "Enable",
-        "display_media_1": "Only media, no content (if any media)",
+        "display_media_1": "Only media, no content",
         "display_author": "Author",
         "display_author_-1": "Disable",
         "display_author_0": "Auto",
@@ -124,6 +126,9 @@
         "display_title_-1": "Disable",
         "display_title_0": "Auto",
         "display_title_1": "Enable",
+        "display_entry_tags": "Hashtags from post (feed entry)",
+        "display_entry_tags_-1": "Disable",
+        "display_entry_tags_1": "Enable",
         "style": "Style",
         "style_0": "RSStT",
         "style_1": "flowerss",
@@ -195,6 +200,9 @@
         "user_not_found": "The user was not found. Use their user ID instead.",
         "user_info": "User info",
         "sub_count": "Subscription count",
+        "sub_limit": "Subscription quantity limit",
+        "sub_limit_unlimited": "unlimited",
+        "sub_limit_default": "default",
         "participant_count": "Participant count",
         "user_state": "User state",
         "user_state_-1": "Banned",
@@ -203,7 +211,10 @@
         "user_state_description_0": "can use the bot only if multi-user mode is enabled",
         "user_state_1": "User",
         "user_state_description_1": "can use the bot",
-        "set_user_state_as": "Set user state as"
+        "set_user_state_as": "Set user state as",
+        "reset_sub_limit_to_default": "Reset subscription quantity limit to default",
+        "set_sub_limit_to": "Set subscription quantity limit to…",
+        "cmd_set_sub_limit_prompt_html": "Command usage: <code>/set_sub_limit user_id subscription_quantity_limit</code>\n\nNote: <code>subscription_quantity_limit</code> must be a integer, <code>-1</code> for unlimited."
     },
     "l10n_cmd_descriptions": {
         "commands": "Commands",
@@ -223,6 +234,6 @@
         "cmd_description_test": "Test (bot manager only)",
         "cmd_description_set_option": "Set bot options (bot manager only)",
         "cmd_description_user_info": "View/modify user info (bot manager only)",
-        "usage_in_channel_or_group_prompt_html": "<b>Usage in channel/group:</b>\n1. Add the bot to your channel/group.\n2a. Directly send commands <b>in the channel/group</b>.\n2b. Or alternatively, you can send commands like <code>/sub @username https://exmaple.com</code> or <code>/sub -10010000000000 https://exmaple.com</code> <b>in the private chat with the bot</b>.\n(<code>@username</code> is the channel/group's username, <code>@</code> is required; <code>-10010000000000</code> is the channel/group's ID, it must start with <code>-100</code>)"
+        "usage_in_channel_or_group_prompt_html": "<b>Usage in channel/group:</b>\n1. Add the bot to your channel/group.\n2a. Directly send commands <b>in the channel/group</b>.\n2b. Or alternatively, you can send commands like <code>/sub @username https://example.com</code> or <code>/sub -10010000000000 https://example.com</code> <b>in the private chat with the bot</b>.\n(<code>@username</code> is the channel/group's username, <code>@</code> is required; <code>-10010000000000</code> is the channel/group's ID, it must start with <code>-100</code>)"
     }
 }

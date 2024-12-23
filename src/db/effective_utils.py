@@ -1,12 +1,33 @@
+#  RSS to Telegram Bot
+#  Copyright (C) 2021-2024  Rongrong <i@rong.moe>
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU Affero General Public License as
+#  published by the Free Software Foundation, either version 3 of the
+#  License, or (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU Affero General Public License for more details.
+#
+#  You should have received a copy of the GNU Affero General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 from __future__ import annotations
 from typing import Optional, Any, NoReturn, Union
+from typing_extensions import Final
 from collections.abc import Callable
-from src.compat import Final
 
+from collections import defaultdict
+from contextlib import suppress
 from math import ceil
 from random import shuffle
 
-from src.db import models
+from . import models
+from .. import log
+
+logger = log.getLogger('RSStT.db')
 
 
 class __EffectiveOptions:
@@ -33,7 +54,11 @@ class __EffectiveOptions:
         self.__default_options: dict[str, Union[str, int]] = {
             "default_interval": 10,
             "minimal_interval": 5,
+            "user_sub_limit": -1,
+            "channel_or_group_sub_limit": -1,
+            "sub_limit_reached_message": "",
         }
+        self.__callbacks: defaultdict[str, list[Callable[[str, Any], NoReturn]]] = defaultdict(list)
 
     @property
     def options(self) -> dict[str, Union[str, int]]:
@@ -51,23 +76,33 @@ class __EffectiveOptions:
     def minimal_interval(self) -> int:
         return self.get("minimal_interval")
 
-    def validate(self, key: str, value: Union[int, str], ignore_type_error: bool = False) -> Union[int, str]:
+    @property
+    def user_sub_limit(self) -> int:
+        return self.get("user_sub_limit")
+
+    @property
+    def channel_or_group_sub_limit(self) -> int:
+        return self.get("channel_or_group_sub_limit")
+
+    @property
+    def sub_limit_reached_message(self) -> str:
+        return self.get("sub_limit_reached_message")
+
+    def cast(self, key: str, value: Any, ignore_type_error: bool = False) -> Union[int, str, None]:
         if len(key) > 255:
             raise KeyError("Option key must be 255 characters or less")
 
         value_type = type(self.__default_options[key])
-        if value_type is str:
-            return str(value)
 
-        if value_type is int and type(value) is str:
-            if value.lstrip('-').isdecimal():
-                return int(value)
+        if value is None:
+            return "" if value_type is str else None
 
+        try:
+            return value_type(value)
+        except (ValueError, TypeError) as e:
             if ignore_type_error:
                 return self.__default_options[key]
-            raise ValueError("Option value must be an integer")
-
-        return value
+            raise TypeError(f"Option value must be of type {value_type}") from e
 
     def get(self, key: str) -> Union[str, int]:
         """
@@ -87,27 +122,43 @@ class __EffectiveOptions:
         :param key: option key
         :param value: option value
         """
-        value = self.validate(key, value)
+        value = self.cast(key, value)
         await models.Option.update_or_create(defaults={'value': str(value)}, key=key)
         self.__options[key] = value
+        if key not in self.__callbacks:
+            return
+        for callback in self.__callbacks[key]:
+            callback(key, value)
 
     async def cache(self) -> NoReturn:
         """
         Cache all options from the DB.
         """
         options = await models.Option.all()
-        for option in options:
-            if option.key not in self.__default_options:  # invalid option
-                continue
-            self.__options[option.key] = self.validate(option.key, option.value, ignore_type_error=True)
+        options = {o.key: o.value for o in options}
 
         for key, value in self.__default_options.items():
-            if key in self.__options:
-                continue
+            if key in options:  # retrieved from db
+                value = self.cast(key, options[key], ignore_type_error=True)  # cast using the type of default value
             self.__options[key] = value
             # await models.Option.create(key=key, value=value)  # init option
+            if key not in self.__callbacks:
+                continue
+            for callback in self.__callbacks[key]:
+                callback(key, value)
 
         self.__cached = True
+
+    def add_set_callback(self, key: str, callback: Callable[[str, Any], NoReturn]) -> NoReturn:
+        """
+        Register a callback to be called when an option is set.
+
+        :param key: option key
+        :param callback: callback function
+        """
+        if key not in self.__default_options:
+            raise KeyError("Invalid option key")
+        self.__callbacks[key].append(callback)
 
 
 EffectiveOptions = __EffectiveOptions()
@@ -190,14 +241,12 @@ class EffectiveTasks:
         :param feed_id: the id of the feed in the task
         :param _preserve_in_all_tasks: for internal use
         """
-        try:
+        with suppress(KeyError):
             old_interval = cls.__all_tasks[feed_id]
             cls.__task_buckets[old_interval].__delete(feed_id)
 
             if not _preserve_in_all_tasks:
                 del cls.__all_tasks[feed_id]
-        except KeyError:
-            pass
 
     @classmethod
     def exist(cls, feed_id: int) -> bool:
